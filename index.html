@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stable Diffusion Prompt Reader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Stable Diffusion Prompt Reader</h1>
+  </header>
+  <main>
+    <div class="main-grid">
+      <div class="left-column">
+        <section id="upload-section">
+          <h2>Upload Image</h2>
+          <div id="drop-area">
+            <div class="drop-region">
+              <span class="drop-icon">🖼️</span>
+              <p><strong>Drag & drop an image here</strong></p>
+              <p>or <label for="fileInput" class="file-label">choose a file</label></p>
+            </div>
+            <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" style="display:none" />
+          </div>
+          <div id="status-bar"></div>
+          <div id="image-preview" style="margin-top:1em;"></div>
+        </section>
+      </div>
+      <div class="right-column">
+        <section id="prompt-section" style="display:none">
+          <h2>Prompt Viewer</h2>
+          <div id="prompt-tabs"></div>
+          <div id="positive-box" class="prompt-box">
+            <h3>Positive Prompt</h3>
+            <textarea id="positive-prompt" rows="4"></textarea>
+          </div>
+          <div id="negative-box" class="prompt-box">
+            <h3>Negative Prompt</h3>
+            <textarea id="negative-prompt" rows="4"></textarea>
+          </div>
+          <div id="metadata-box">
+            <h3>Other Metadata</h3>
+            <textarea id="param-list" rows="6"></textarea>
+          </div>
+          <div id="prompt-actions">
+            <button id="copyBtn">Copy Positive Prompt</button>
+            <button id="saveBtn">Save Edits</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <footer>
+    <p>Open Source | <a href="https://github.com/" target="_blank">GitHub</a></p>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
