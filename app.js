@@ -44,6 +44,7 @@ function handleFiles(files) {
 
 
 function readImageMetadata(file) {
+  console.log('Reading metadata for file:', file.name, 'type:', file.type);
   // Only PNG for now; JPEG/WEBP can be added later
   const reader = new FileReader();
   reader.onload = function(e) {
@@ -65,8 +66,28 @@ function readImageMetadata(file) {
         }
         i += 8 + length + 4;
       }
+    } else if (file.type === 'image/jpeg') {
+      console.log('Processing JPEG file');
+      // Try EXIF UserComment first
+      text = extractEXIFUserComment(arr);
+      if (!text) {
+        // Fallback to simple text search
+        let fullText = new TextDecoder().decode(arr);
+        console.log('Full text length:', fullText.length);
+        console.log('Full text length:', fullText);
+        let match = fullText.match(/(Steps:.*)/s);
+        console.log('Match found:', !!match);
+        if (match) {
+          text = match[1];
+          console.log('Extracted text:', text.substring(0, 100) + '...');
+        } else {
+          console.log('No match for Steps:');
+        }
+      } else {
+        console.log('Extracted from EXIF:', text.substring(0, 100) + '...');
+      }
     }
-    // Fallback: try EXIF for JPEG/WEBP (not implemented yet)
+    // Fallback
     if (!text) text = 'Prompt not found.';
     // Parse prompt metadata
     const parsed = parsePrompt(text);
@@ -79,6 +100,7 @@ function readImageMetadata(file) {
 
 // Parse prompt metadata into positive, negative, and other metadata
 function parsePrompt(raw) {
+
   // Remove any leading "parameters" line
   raw = raw.replace(/^parameters\s*/i, '');
 
@@ -107,7 +129,18 @@ function parsePrompt(raw) {
   paramLines.forEach(line => {
     let m = line.match(/^([\w ][\w ]*):\s*(.+)$/);
     if (m) {
-      params[m[1]] = m[2];
+      let key = m[1];
+      let value = m[2];
+      // Try to parse JSON for fields like "Civitai resources" and "Civitai metadata"
+      if (value.startsWith('[') || value.startsWith('{')) {
+        try {
+          params[key] = JSON.parse(value);
+        } catch (e) {
+          params[key] = value; // keep as string if not valid JSON
+        }
+      } else {
+        params[key] = value;
+      }
     }
   });
 
@@ -117,14 +150,19 @@ function parsePrompt(raw) {
 
 
 
-
 function showPrompt(data) {
   promptSection.style.display = '';
   // Fill textareas
   document.getElementById('positive-prompt').value = data.prompt || '';
   document.getElementById('negative-prompt').value = data.negative || '';
   // Metadata as editable text (key: value per line)
-  let metaText = Object.keys(data.params).sort().map(key => `${key}: ${data.params[key]}`).join('\n');
+  let metaText = Object.keys(data.params).sort().map(key => {
+    let value = data.params[key];
+    if (typeof value === 'object') {
+      value = JSON.stringify(value, null, 2);
+    }
+    return `${key}: ${value}`;
+  }).join('\n');
   document.getElementById('param-list').value = metaText;
   // Remove detected tool status
   statusBar.textContent = '';
@@ -208,18 +246,85 @@ function updatePngTextChunk(arr, text) {
   return new Uint8Array(out);
 }
 
-// CRC32 helper for PNG chunk
-function crc32(buf) {
-  let table = window._crcTable;
-  if (!table) {
-    table = window._crcTable = [];
-    for (let n =0; n < 256; n++) {
-      let c = n;
-      for (let k=0; k<8; k++) c = ((c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1));
-      table[n] = c;
+// Helper to extract EXIF UserComment from JPEG
+function extractEXIFUserComment(arr) {
+  console.log('Attempting to extract EXIF UserComment');
+  let i = 2; // after SOI
+  while (i < arr.length - 1) {
+    if (arr[i] === 0xFF && arr[i+1] === 0xE1) { // APP1
+      let length = (arr[i+2] << 8) | arr[i+3];
+      let marker = arr.slice(i+4, i+4+6);
+      if (String.fromCharCode(...marker) === 'Exif\x00\x00') {
+        console.log('Found EXIF APP1');
+        let exifData = arr.slice(i+10, i+2+length);
+        return parseTIFFForUserComment(exifData);
+      }
+      i += 2 + length;
+    } else if (arr[i] === 0xFF && arr[i+1] >= 0xD0 && arr[i+1] <= 0xD9) { // RST or SOF
+      i += 2;
+    } else if (arr[i] === 0xFF) {
+      let length = (arr[i+2] << 8) | arr[i+3];
+      i += 2 + length;
+    } else {
+      i++;
     }
   }
-  let crc = -1;
-  for (let i=0; i<buf.length; i++) crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xff];
-  return (crc ^ -1) >>> 0;
+  console.log('No EXIF found');
+  return null;
+}
+
+function parseTIFFForUserComment(data) {
+  console.log('TIFF data length:', data.length);
+  if (data.length < 8) return null;
+  let littleEndian = data[0] === 0x49 && data[1] === 0x49;
+  let bigEndian = data[0] === 0x4D && data[1] === 0x4D;
+  console.log('littleEndian:', littleEndian, 'bigEndian:', bigEndian);
+  if (!littleEndian && !bigEndian) return null;
+  let read16 = littleEndian ? (o) => data[o] | (data[o+1] << 8) : (o) => (data[o] << 8) | data[o+1];
+  let read32 = littleEndian ? (o) => data[o] | (data[o+1] << 8) | (data[o+2] << 16) | (data[o+3] << 24) :
+                              (o) => (data[o] << 24) | (data[o+1] << 16) | (data[o+2] << 8) | data[o+3];
+  if (read16(2) !== 0x2A) return null;
+  let ifdOffset = read32(4);
+  console.log('ifdOffset:', ifdOffset);
+  return parseIFD(data, ifdOffset, read16, read32, littleEndian);
+}
+
+function parseIFD(data, offset, read16, read32, littleEndian) {
+  console.log('Parsing IFD at offset:', offset);
+  let numEntries = read16(offset);
+  console.log('numEntries:', numEntries);
+  offset += 2;
+  for (let j = 0; j < numEntries; j++) {
+    let tag = read16(offset);
+    let type = read16(offset+2);
+    let count = read32(offset+4);
+    let valueOffset = read32(offset+8);
+    console.log('Entry', j, 'tag:', tag, 'type:', type, 'count:', count, 'valueOffset:', valueOffset);
+    if (tag === 37510) { // UserComment
+      console.log('Found UserComment tag');
+      let comment;
+      if (count <= 4) {
+        comment = data.slice(offset+8, offset+8+count);
+      } else {
+        comment = data.slice(valueOffset, valueOffset + count);
+      }
+      // Remove encoding byte if present
+      if (comment.length > 8 && comment[0] === 0x55 && comment[1] === 0x4E && comment[2] === 0x49 && comment[3] === 0x43 && comment[4] === 0x4F && comment[5] === 0x44 && comment[6] === 0x45 && comment[7] === 0x00) {
+        comment = comment.slice(8);
+        // UNICODE encoding in EXIF typically uses UTF-16BE regardless of TIFF endianness
+        console.log('UNICODE encoding detected, using utf-16be decoder');
+        return new TextDecoder('utf-16be').decode(comment).trim();
+      }
+      return new TextDecoder().decode(comment).trim();
+    } else if (tag === 34665) { // ExifIFD
+      console.log('Found ExifIFD tag, parsing subIFD at', valueOffset);
+      let subResult = parseIFD(data, valueOffset, read16, read32, littleEndian);
+      if (subResult) return subResult;
+    }
+    offset += 12;
+  }
+  let nextIFD = read32(offset);
+  console.log('nextIFD:', nextIFD);
+  if (nextIFD) return parseIFD(data, nextIFD, read16, read32, littleEndian);
+  return null;
 }
